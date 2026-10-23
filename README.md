@@ -42,26 +42,77 @@ CLAUDE_MANAGED_ENVIRONMENT_ID=your_environment_id
 PORT=3050
 ```
 
-## How the application was developed
+## How the app was build
 
-The browser collects inputs; the Node host validates requests; the lesson implementation produces observable evidence. The architecture page walks through the real source with numbered steps, prerequisite configuration, source filenames and code excerpts.
+### 1. Derive managed names only from a bounded run ID
 
-### Lesson implementation
+The run ID grammar excludes path traversal and shell metacharacters. The branch and directory names are then derived within fixed managed prefixes.
 
-[src/lesson.ts](https://github.com/luiscoco/Udemy-claude-managed-agents-lesson-c50-app/blob/main/src/lesson.ts)
+Source: [src/lesson.ts](src/lesson.ts#L13) · selected statements
 
 ```typescript
-  async run(input) {
+const run = text(input, "runId");
 
-const run=text(input,"runId");if(!/^[a-z0-9][a-z0-9-]{0,39}$/.test(run))return report("rejected","Run ID cannot become a safe branch and managed path",{},["Validate host job identifiers before planning commands"]);
-const directory=`managed-worktrees/${run}`,branch=`agents/${run}`,cleanupAllowed=!flag(input,"dirty")&&!flag(input,"workerActive");
-return report(cleanupAllowed?"passed":"paused",cleanupAllowed?"Prepared creation and conditional cleanup plans":"Preserve the dirty or active worker tree",{directory,branch,createArgs:["worktree","add","-b",branch,directory,"reviewed-base"],cleanupAllowed,commandsExecuted:false},["Resolve a protected managed root","Reserve unique branch and directory","Invoke Git with an argument array in a real adapter","Require quiescent and clean state before removal"]);
+if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(run))
+  return report(
+    "rejected",
+    "Run ID cannot become a safe branch and managed path",
+    {},
+    ["Validate host job identifiers before planning commands"],
+  );
 
-  }
-};
+const directory = `managed-worktrees/${run}`,
+  branch = `agents/${run}`,
+  cleanupAllowed = !flag(input, "dirty") && !flag(input, "workerActive");
 ```
 
-Read the architecture page for the remaining source excerpts and explanations, including input handling and optional provider behavior. The diagram describes this application, rather than implying that an external integration has been implemented.
+### 2. Plan argument-array commands and preserve active work
+
+The Git creation plan uses an argument array instead of a shell string. Cleanup is allowed only when the supplied dirty and workerActive flags are false; commandsExecuted stays false, so no worktree is created or removed.
+
+Source: [src/lesson.ts](src/lesson.ts#L15)
+
+```typescript
+return report(
+  cleanupAllowed ? "passed" : "paused",
+  cleanupAllowed
+    ? "Prepared creation and conditional cleanup plans"
+    : "Preserve the dirty or active worker tree",
+  {
+    directory,
+    branch,
+    createArgs: ["worktree", "add", "-b", branch, directory, "reviewed-base"],
+    cleanupAllowed,
+    commandsExecuted: false,
+  },
+  [
+    "Resolve a protected managed root",
+    "Reserve unique branch and directory",
+    "Invoke Git with an argument array in a real adapter",
+    "Require quiescent and clean state before removal",
+  ],
+);
+```
+
+### Check your understanding
+
+Run **Plan an isolated worker tree** in the application. Compare the result with these scenario expectations:
+
+```json
+{
+  "input": {
+    "runId": "worker-1",
+    "dirty": false,
+    "workerActive": false
+  },
+  "expectedOutcome": "passed",
+  "checkEvidence": {
+    "cleanupAllowed": true
+  }
+}
+```
+
+Then try **Preserve dirty worker work**. Its expected outcome is `paused`; identify the condition or evidence field that explains the difference.
 
 ## Validation
 
