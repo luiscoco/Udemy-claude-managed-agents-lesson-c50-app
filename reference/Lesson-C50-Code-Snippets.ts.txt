@@ -1,0 +1,47 @@
+// Git worktree planning and lifecycle through an injected command port.
+// No command runs at module load. Example checks use a fake port only.
+import path from "node:path";
+import { z } from "zod";
+const Job = z.strictObject({ runId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/),
+  taskId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/),
+  baseCommit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/) });
+export interface CommandPort { run(args: string[], cwd: string): Promise<void> }
+export type WorktreeRecord = { repoRoot: string; managedRoot: string; directory: string;
+  branch: string; baseCommit: string; phase: "planned" | "creating" | "ready" | "needs_reconciliation" };
+export function planWorktree(repoRoot: string, managedRoot: string, rawJob: unknown): WorktreeRecord {
+  const job = Job.parse(rawJob);
+  const root = path.resolve(managedRoot);
+  const directory = path.resolve(root, `${job.runId}-${job.taskId}`);
+  const relative = path.relative(root, directory);
+  if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path.sep))
+    throw new Error("Outside managed root");
+  return { repoRoot: path.resolve(repoRoot), managedRoot: root, directory,
+    branch: `agent/${job.runId}/${job.taskId}`, baseCommit: job.baseCommit, phase: "planned" };
+}
+export async function provision(port: CommandPort, record: WorktreeRecord) {
+  if (record.phase !== "planned") throw new Error("Already claimed");
+  record.phase = "creating";
+  try {
+    await port.run(["worktree", "add", "-b", record.branch, "--", record.directory, record.baseCommit], record.repoRoot);
+    record.phase = "ready";
+    return record.directory;
+  } catch (error) { record.phase = "needs_reconciliation"; throw error; }
+}
+export function cleanupPlan(record: WorktreeRecord, observed: { directory: string; branch: string;
+  dirty: boolean; activeWorkers: number; artifactsRetained: boolean }) {
+  if (record.phase !== "ready" || path.resolve(observed.directory) !== record.directory ||
+      observed.branch !== record.branch || observed.dirty || observed.activeWorkers !== 0 || !observed.artifactsRetained)
+    throw new Error("Worktree is not eligible for removal");
+  const relative = path.relative(record.managedRoot, record.directory);
+  if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path.sep))
+    throw new Error("Removal path outside managed root");
+  return ["worktree", "remove", "--", record.directory]; // Plan only; never force or raw-delete.
+}
+// Preconditions for a real port: authorize repository/job, canonicalize and protect
+// managed root and ancestors, atomically reserve unique branch/path, create parent
+// directory, reject existing targets/links, verify Git's actual registration/base,
+// invoke Git with argument arrays and shell:false, bounded runtime, controlled env,
+// reviewed config/hooks and appropriate OS isolation. Workers must be quiescent
+// while cleanup is checked/applied. Dirty work is preserved, not forcibly removed.
+// Linked worktrees share repository objects/refs/config and do not prevent semantic
+// merge conflicts. A host directory is not automatically mounted in a cloud session.
